@@ -29,6 +29,27 @@ class Configuration(BaseModel):
         },
     )
 
+    openai_query_generator_model: str = Field(
+        default="gpt-4o-mini",
+        metadata={
+            "description": "The name of the OpenAI model to use for query generation (fast model)."
+        },
+    )
+
+    openai_reflection_model: str = Field(
+        default="o1-preview",
+        metadata={
+            "description": "The name of the OpenAI model to use for reflection (reasoning model)."
+        },
+    )
+
+    openai_answer_model: str = Field(
+        default="gpt-4.1",
+        metadata={
+            "description": "The name of the OpenAI model to use for the final answer (balanced model)."
+        },
+    )
+
     number_of_initial_queries: int = Field(
         default=3,
         metadata={"description": "The number of initial search queries to generate."},

@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
 from google.genai import Client
+from langchain_openai import AzureChatOpenAI
 
 from agent.state import (
     OverallState,
@@ -23,7 +24,6 @@ from agent.prompts import (
     reflection_instructions,
     answer_instructions,
 )
-from langchain_google_genai import ChatGoogleGenerativeAI
 from agent.utils import (
     get_citations,
     get_research_topic,
@@ -44,7 +44,7 @@ genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
     """LangGraph node that generates a search queries based on the User's question.
 
-    Uses Gemini 2.0 Flash to create an optimized search query for web research based on
+    Uses Azure OpenAI to create an optimized search query for web research based on
     the User's question.
 
     Args:
@@ -60,21 +60,21 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
-    # init Gemini 2.0 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
+    # init LLM
+    llm = AzureChatOpenAI(
+        deployment_name=configurable.openai_query_generator_model,
+        model_name=configurable.openai_query_generator_model,
         temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        streaming=True,
     )
     structured_llm = llm.with_structured_output(SearchQueryList)
 
     # Format the prompt
     current_date = get_current_date()
     formatted_prompt = query_writer_instructions.format(
-        current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
+        current_date=current_date,
     )
     # Generate the search queries
     result = structured_llm.invoke(formatted_prompt)
@@ -104,26 +104,26 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     Returns:
         Dictionary with state update, including sources_gathered, research_loop_count, and web_research_results
     """
-    # Configure
     configurable = Configuration.from_runnable_config(config)
-    formatted_prompt = web_searcher_instructions.format(
-        current_date=get_current_date(),
-        research_topic=state["search_query"],
+
+    # Get the query from the state
+    query = state["search_query"]
+
+    # Use the Google Search tool to get the search results
+    # Ensure a valid Gemini model name is passed for tool execution.
+    tool_result = genai_client.models.generate_content(
+        model="models/gemini-1.5-pro", 
+        contents=web_searcher_instructions.format(research_topic=query, current_date=get_current_date()),
+        config={  
+            "temperature": 0,
+            "tools": [{"google_search": {}}]
+        }
     )
 
-    # Uses the google genai client as the langchain client doesn't return grounding metadata
-    response = genai_client.models.generate_content(
-        model=configurable.query_generator_model,
-        contents=formatted_prompt,
-        config={
-            "tools": [{"google_search": {}}],
-            "temperature": 0,
-        },
-    )
+    # Extract the search results from the tool call
+    response = tool_result.candidates[0]
     # resolve the urls to short urls for saving tokens and time
-    resolved_urls = resolve_urls(
-        response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
-    )
+    resolved_urls = resolve_urls(response.grounding_metadata.grounding_chunks, state["id"])
     # Gets the citations and adds them to the generated text
     citations = get_citations(response, resolved_urls)
     modified_text = insert_citation_markers(response.text, citations)
@@ -163,11 +163,11 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
     # init Reasoning Model
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
+    llm = AzureChatOpenAI(
+        deployment_name=configurable.openai_reflection_model,
+        model_name=configurable.openai_reflection_model,
         temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        streaming=True,
     )
     result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
 
@@ -242,11 +242,11 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     )
 
     # init Reasoning Model, default to Gemini 2.5 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=reasoning_model,
+    llm = AzureChatOpenAI(
+        deployment_name=configurable.openai_answer_model,
+        model_name=configurable.openai_answer_model,
         temperature=0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        streaming=True,
     )
     result = llm.invoke(formatted_prompt)
 
