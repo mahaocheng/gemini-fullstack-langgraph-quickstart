@@ -92,7 +92,7 @@ def continue_to_web_research(state: QueryGenerationState):
     ]
 
 
-def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
+def web_research1(state: WebSearchState, config: RunnableConfig) -> OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
     Executes a web search using the native Google Search API tool in combination with Gemini 2.0 Flash.
@@ -136,6 +136,86 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     }
 
 
+import requests
+from bs4 import BeautifulSoup
+import urllib.parse
+
+
+DEFAULT_SEARCH_ENGINE_TIMEOUT = 100
+REFERENCE_COUNT = 10
+GOOGLE_SEARCH_ENDPOINT = "https://customsearch.googleapis.com/customsearch/v1"
+
+def search_with_google(query: str, subscription_key: str, cx: str):
+    """
+    Search with google and return the contexts.
+    """
+    params = {
+        "key": subscription_key,
+        "cx": cx,
+        "q": query,
+        "num": REFERENCE_COUNT,
+    }
+    response = requests.get(
+        GOOGLE_SEARCH_ENDPOINT, params=params, timeout=DEFAULT_SEARCH_ENGINE_TIMEOUT
+    )
+    if not response.ok:
+        print(f"{response.status_code} {response.text}")
+        raise HTTPException(response.status_code, "Search engine error.")
+    json_content = response.json()
+    try:
+        contexts = json_content["items"][:REFERENCE_COUNT]
+    except KeyError:
+        print(f"Error encountered: {json_content}")
+        return []
+    return contexts
+
+
+
+def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
+    """LangGraph node that performs web research using DuckDuckGo.
+
+    Executes a web search using the DuckDuckGo Search API and formats the
+    results for later processing.
+
+    Args:
+        state: Current graph state containing the search query and research loop count
+        config: Configuration for the runnable, including search API settings
+
+    Returns:
+        Dictionary with state update, including sources_gathered, research_loop_count, and web_research_results
+    """
+    # Configure
+    configurable = Configuration.from_runnable_config(config)
+    query = state["search_query"]
+
+    search_api_key = os.environ["GOOGLE_SEARCH_API_KEY"]
+    # with DDGS() as ddgs:
+    #     print(query, "xxx")
+    #     results = list(ddgs.text(query, max_results=5))
+
+    results = search_with_google(query, search_api_key, 
+    os.environ["GOOGLE_SEARCH_CX"])
+
+    formatted_lines = []
+    sources_gathered = []
+    for res in results:
+        # print(res, "qqq")
+        title = res.get("title", "")
+        # href = res.get("href", "")
+        # body = res.get("body", "")
+        href = res.get("link", "")
+        body = res.get("snippet", "")
+        formatted_lines.append(f"{title}: {body} ({href})")
+        sources_gathered.append({"label": title, "short_url": href, "value": href})
+
+    modified_text = "\n".join(formatted_lines)
+
+    return {
+        "sources_gathered": sources_gathered,
+        "search_query": [query],
+        "web_research_result": [modified_text],
+    }
+
 def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     """LangGraph node that identifies knowledge gaps and generates potential follow-up queries.
 
@@ -151,9 +231,8 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         Dictionary with state update, including search_query key containing the generated follow-up query
     """
     configurable = Configuration.from_runnable_config(config)
-    # Increment the research loop count and get the reasoning model
+    # Increment the research loop count 
     state["research_loop_count"] = state.get("research_loop_count", 0) + 1
-    reasoning_model = state.get("reasoning_model") or configurable.reasoning_model
 
     # Format the prompt
     current_date = get_current_date()
@@ -167,7 +246,7 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         deployment_name=configurable.openai_reflection_model,
         model_name=configurable.openai_reflection_model,
         temperature=1.0,
-        streaming=True,
+        streaming=False,
     )
     result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
 
@@ -231,7 +310,6 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         Dictionary with state update, including running_summary key containing the formatted final summary with sources
     """
     configurable = Configuration.from_runnable_config(config)
-    reasoning_model = state.get("reasoning_model") or configurable.reasoning_model
 
     # Format the prompt
     current_date = get_current_date()

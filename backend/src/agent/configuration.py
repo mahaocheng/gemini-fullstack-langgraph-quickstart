@@ -30,14 +30,14 @@ class Configuration(BaseModel):
     )
 
     openai_query_generator_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-4.1",
         metadata={
             "description": "The name of the OpenAI model to use for query generation (fast model)."
         },
     )
 
     openai_reflection_model: str = Field(
-        default="o1-preview",
+        default="gpt-4.1",
         metadata={
             "description": "The name of the OpenAI model to use for reflection (reasoning model)."
         },
@@ -51,12 +51,12 @@ class Configuration(BaseModel):
     )
 
     number_of_initial_queries: int = Field(
-        default=3,
+        default=5,
         metadata={"description": "The number of initial search queries to generate."},
     )
 
     max_research_loops: int = Field(
-        default=2,
+        default=5,
         metadata={"description": "The maximum number of research loops to perform."},
     )
 
