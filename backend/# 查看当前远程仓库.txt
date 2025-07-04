@@ -1,0 +1,9 @@
+# 查看当前远程仓库
+git remote -v
+
+# 修改为 HTTPS URL
+git remote set-url origin https://github.com/mahaocheng/gemini-fullstack-langgraph-quickstart.git
+
+# 确认代理设置
+git config --global http.proxy http://127.0.0.1:10809
+git config --global https.proxy http://127.0.0.1:10809
